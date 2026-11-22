@@ -2,8 +2,8 @@
 
 [English](README.en.md)
 
-[![Build](https://img.shields.io/github/actions/workflow/status/qiin2333/moonlight-qt/build.yml?branch=master)](https://github.com/qiin2333/moonlight-qt/actions/workflows/build.yml?query=branch%3Amaster)
-[![Downloads](https://img.shields.io/github/downloads/qiin2333/moonlight-qt/total)](https://github.com/qiin2333/moonlight-qt/releases)
+[![Build](https://img.shields.io/github/actions/workflow/status/MvCraK/moonlight-qt/build.yml?branch=master)](https://github.com/MvCraK/moonlight-qt/actions/workflows/build.yml?query=branch%3Amaster)
+[![Downloads](https://img.shields.io/github/downloads/MvCraK/moonlight-qt/total)](https://github.com/MvCraK/moonlight-qt/releases)
 
 Moonlight V+ for PC 是基于 [moonlight-stream/moonlight-qt](https://github.com/moonlight-stream/moonlight-qt) 维护的增强版桌面客户端，面向搭配 [Foundation Sunshine](https://github.com/qiin2333/Sunshine) 使用的桌面串流场景。
 
@@ -11,7 +11,7 @@ Moonlight V+ for PC 是基于 [moonlight-stream/moonlight-qt](https://github.com
 
 ## 下载
 
-推荐从 [GitHub Releases](https://github.com/qiin2333/moonlight-qt/releases) 下载 Windows、macOS、Linux AppImage 和 Steam Link 构建产物。
+推荐从 [GitHub Releases](https://github.com/MvCraK/moonlight-qt/releases) 下载 Windows、macOS、Linux AppImage 和 Steam Link 构建产物。
 
 Windows 便携版升级时，建议解压到新文件夹，再复制旧目录中的 `Moonlight Game Streaming Project` 设置文件夹。若覆盖旧目录，旧版 `tls/qopensslbackend.dll` 可能与新版 Qt 不兼容并导致启动崩溃，应移除该旧文件。
 
@@ -56,7 +56,7 @@ Foundation Sunshine 是 Moonlight V+ for PC 的主要服务端配套项目。客
 
 ### 自动化与发布
 
-- **Moonlight V+ 更新检查**：客户端更新检查指向 `qiin2333/moonlight-qt` 的 GitHub Releases。
+- **Moonlight V+ 更新检查**：客户端更新检查指向 `MvCraK/moonlight-qt` 的 GitHub Releases。
 - **基于 Git tag 的版本号**：`scripts/derive-version.py` 支持 CI 与本地构建产物使用一致的版本命名。
 - **自动翻译构建**：`.github/workflows/build-translate.yml` 用于周期性更新 `.ts` / `.qm` 翻译资源。
 - **CI 构建矩阵**：Windows、macOS、Linux AppImage 和 Steam Link 均有独立工作流维护。

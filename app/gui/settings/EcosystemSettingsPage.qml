@@ -18,7 +18,7 @@ Column {
     readonly property string paragraphIndent: "\u00A0\u00A0\u00A0\u00A0"
     readonly property string sunshineUrl: "https://github.com/AlkaidLab/foundation-sunshine"
     readonly property string sunshineDownloadUrl: sunshineUrl + "/releases/latest"
-    readonly property string pcUrl: "https://github.com/qiin2333/moonlight-qt"
+    readonly property string pcUrl: "https://github.com/MvCraK/moonlight-qt"
     readonly property string pcDownloadUrl: pcUrl + "/releases/latest"
     readonly property string androidUrl: "https://github.com/qiin2333/moonlight-vplus"
     readonly property string androidDownloadUrl: androidUrl + "/releases/latest"

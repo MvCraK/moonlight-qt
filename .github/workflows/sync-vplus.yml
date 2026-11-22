@@ -1,0 +1,49 @@
+name: Sync Moonlight V+ for PC
+on:
+  schedule:
+    - cron: '27 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: write
+concurrency: sync-vplus-master
+
+jobs:
+  sync:
+    if: github.repository == 'MvCraK/moonlight-qt' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: master
+      - name: Merge the direct upstream
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git fetch --no-tags https://github.com/qiin2333/moonlight-qt.git refs/heads/master
+          source=$(git rev-parse FETCH_HEAD)
+          if git merge-base --is-ancestor "$source" HEAD; then
+            echo "master already contains upstream $source" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          review() {
+            topic="sync/vplus-$source"
+            if git push origin "$source:refs/heads/$topic"; then
+              link="https://github.com/$GITHUB_REPOSITORY/compare/master...$topic?expand=1"
+            else
+              link="https://github.com/$GITHUB_REPOSITORY/compare/master...qiin2333:moonlight-qt:master?expand=1"
+            fi
+            echo "Manual integration required for upstream $source. [Review changes]($link)." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          }
+          if ! git merge --no-ff --no-edit "$source"; then
+            git merge --abort
+            review
+          fi
+          git push origin HEAD:refs/heads/master || review
+          # GitHub suppresses push-triggered runs for writes made by GITHUB_TOKEN.
+          gh workflow run build.yml --ref master

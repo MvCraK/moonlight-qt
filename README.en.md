@@ -2,8 +2,8 @@
 
 [中文](README.md)
 
-[![Build](https://img.shields.io/github/actions/workflow/status/qiin2333/moonlight-qt/build.yml?branch=master)](https://github.com/qiin2333/moonlight-qt/actions/workflows/build.yml?query=branch%3Amaster)
-[![Downloads](https://img.shields.io/github/downloads/qiin2333/moonlight-qt/total)](https://github.com/qiin2333/moonlight-qt/releases)
+[![Build](https://img.shields.io/github/actions/workflow/status/MvCraK/moonlight-qt/build.yml?branch=master)](https://github.com/MvCraK/moonlight-qt/actions/workflows/build.yml?query=branch%3Amaster)
+[![Downloads](https://img.shields.io/github/downloads/MvCraK/moonlight-qt/total)](https://github.com/MvCraK/moonlight-qt/releases)
 
 Moonlight V+ for PC is an enhanced desktop client based on [moonlight-stream/moonlight-qt](https://github.com/moonlight-stream/moonlight-qt), designed to work closely with [Foundation Sunshine](https://github.com/qiin2333/Sunshine).
 
@@ -11,7 +11,7 @@ It remains compatible with upstream Moonlight and standard Sunshine hosts, while
 
 ## Downloads
 
-Download Windows, macOS, Linux AppImage, and Steam Link builds from [GitHub Releases](https://github.com/qiin2333/moonlight-qt/releases).
+Download Windows, macOS, Linux AppImage, and Steam Link builds from [GitHub Releases](https://github.com/MvCraK/moonlight-qt/releases).
 
 For Windows portable upgrades, extract into a new folder and copy the old `Moonlight Game Streaming Project` settings folder. If you overwrite an older installation, remove the old `tls/qopensslbackend.dll`: it can be incompatible with the newer Qt runtime and cause a startup crash.
 
@@ -56,7 +56,7 @@ You can use it like a regular Moonlight client, or pair it with a Foundation Sun
 
 ### Automation And Releases
 
-- **Fork-specific update checks** using GitHub Releases from `qiin2333/moonlight-qt`.
+- **Fork-specific update checks** using GitHub Releases from `MvCraK/moonlight-qt`.
 - **Git tag based versioning** through `scripts/derive-version.py`, keeping CI and local artifact names consistent.
 - **Automated translation build** via `.github/workflows/build-translate.yml` for `.ts` / `.qm` resources.
 - **CI build matrix** for Windows, macOS, Linux AppImage, and Steam Link artifacts.

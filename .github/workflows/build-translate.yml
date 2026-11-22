@@ -3,6 +3,7 @@ name: Build Translate Resources
 on:
   push:
     branches: [master]
+    paths: ['app/languages/*.ts']
   workflow_dispatch:
 
 jobs:

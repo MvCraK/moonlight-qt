@@ -5,24 +5,16 @@ on:
     branches: [ master, main ]
   pull_request:
     branches: [ master, main ]
-  release:
-    types: [ published ]
   workflow_dispatch:
-    inputs:
-      publish_release:
-        description: Rebuild a version tag and replace its existing release assets
-        type: boolean
-        default: false
 
 permissions:
-  contents: write
-  packages: write
-  actions: read
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 env:
+  CI_VERSION: 6.6.${{ github.run_number }}
   BUILD_NUMBER: ${{ github.run_number }}
 
 jobs:
@@ -335,6 +327,8 @@ jobs:
     - name: Upload portable artifact x64
       uses: actions/upload-artifact@v4
       with:
+        if-no-files-found: error
+        overwrite: true
         name: Moonlight-VPlus-Portable-x64-r${{ env.BUILD_NUMBER }}
         path: build/installer-x64-release/Moonlight-VPlus-Portable-x64-*.zip
 
@@ -342,12 +336,16 @@ jobs:
       if: github.event_name != 'pull_request'
       uses: actions/upload-artifact@v4
       with:
+        if-no-files-found: error
+        overwrite: true
         name: MoonlightPortable-x64-r${{ env.BUILD_NUMBER }}
         path: build/installer-x64-release/MoonlightPortable-x64-*.zip
 
     - name: Upload portable artifact arm64
       uses: actions/upload-artifact@v4
       with:
+        if-no-files-found: error
+        overwrite: true
         name: Moonlight-VPlus-Portable-arm64-r${{ env.BUILD_NUMBER }}
         path: build/installer-arm64-release/Moonlight-VPlus-Portable-arm64-*.zip
 
@@ -355,12 +353,16 @@ jobs:
       if: github.event_name != 'pull_request'
       uses: actions/upload-artifact@v4
       with:
+        if-no-files-found: error
+        overwrite: true
         name: MoonlightPortable-arm64-r${{ env.BUILD_NUMBER }}
         path: build/installer-arm64-release/MoonlightPortable-arm64-*.zip
 
     - name: Upload executable artifact
       uses: actions/upload-artifact@v4
       with:
+        if-no-files-found: error
+        overwrite: true
         name: Moonlight-VPlus-Setup-r${{ env.BUILD_NUMBER }}.exe
         path: build/installer-Release/Moonlight-VPlus-Setup-*.exe
 
@@ -368,6 +370,8 @@ jobs:
       if: github.event_name != 'pull_request'
       uses: actions/upload-artifact@v4
       with:
+        if-no-files-found: error
+        overwrite: true
         name: MoonlightSetup-r${{ env.BUILD_NUMBER }}.exe
         path: build/installer-Release/MoonlightSetup-*.exe
 
@@ -448,9 +452,10 @@ jobs:
     - name: Upload DMG artifact
       uses: actions/upload-artifact@v4
       with:
+        if-no-files-found: error
+        overwrite: true
         name: Moonlight-VPlus-r${{ env.BUILD_NUMBER }}.dmg
         path: build/installer-Release/Moonlight-VPlus-*.dmg
-        if-no-files-found: error
 
   build-linux:
     # x86_64 用标准 runner，aarch64 用 GitHub 的免费 ARM runner（公共仓库可用）。
@@ -463,7 +468,7 @@ jobs:
     name: build-linux (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
     env:
-      APPIMAGE_UPDATE_TAG: ${{ github.event_name == 'release' && github.event.release.prerelease && 'latest-pre' || 'latest' }}
+      APPIMAGE_UPDATE_TAG: latest
 
     strategy:
       # 一边挂了不要连累另一边，方便单独看是哪个架构的问题。
@@ -806,11 +811,12 @@ jobs:
     - name: Upload AppImage artifact
       uses: actions/upload-artifact@v4
       with:
+        if-no-files-found: error
+        overwrite: true
         name: Moonlight-VPlus-r${{ env.BUILD_NUMBER }}-${{ matrix.arch }}.AppImage
         path: |
           build/installer-release/Moonlight-VPlus-*-${{ matrix.arch }}.AppImage
           build/installer-release/Moonlight-VPlus-*-${{ matrix.arch }}.AppImage.zsync
-        if-no-files-found: error
 
 
   build-steamlink:
@@ -868,34 +874,27 @@ jobs:
     - name: Upload SteamLink artifact
       uses: actions/upload-artifact@v4
       with:
+        if-no-files-found: error
+        overwrite: true
         name: Moonlight-VPlus-SteamLink-r${{ env.BUILD_NUMBER }}
         path: build/installer-release/Moonlight-VPlus-SteamLink-*.zip
 
   release:
-    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.publish_release && github.ref_type == 'tag')
+    if: github.repository == 'MvCraK/moonlight-qt' && github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
     needs: [qml-lint, version-tests, cpp-format, build-windows, build-macos, build-linux, build-steamlink]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
-    - name: Verify existing release before replacing assets
-      if: github.event_name == 'workflow_dispatch'
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - uses: actions/download-artifact@v4
+      with:
+        path: dist
+        merge-multiple: true
+    - name: Publish verified desktop packages
       env:
         GH_TOKEN: ${{ github.token }}
-        RELEASE_TAG: ${{ github.ref_name }}
-      run: gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
-
-    - name: Download all artifacts
-      uses: actions/download-artifact@v4
-
-    - name: Upload release assets
-      uses: softprops/action-gh-release@v1
-      with:
-        tag_name: ${{ github.event.release.tag_name || github.ref_name }}
-        files: |
-          **/*.exe
-          **/*.zip
-          **/*.dmg
-          **/*.AppImage
-          **/*.AppImage.zsync
-      env:
-        GITHUB_TOKEN: ${{ secrets.GH_BOT_TOKEN }}
+      run: python3 scripts/publish-desktop.py dist

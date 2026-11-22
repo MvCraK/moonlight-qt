@@ -197,7 +197,7 @@ if [ -n "$QT_PLUGIN_PATH" ] && [ -d "$QT_PLUGIN_PATH/multimedia" ]; then
 fi
 
 APPIMAGE_PATH="$INSTALLER_FOLDER/Moonlight-VPlus-$VERSION-$APPIMAGE_ARCH.AppImage"
-APPIMAGE_UPDATE_INFORMATION="gh-releases-zsync|qiin2333|moonlight-qt|$APPIMAGE_UPDATE_TAG|Moonlight-VPlus-*-${APPIMAGE_ARCH}.AppImage.zsync"
+APPIMAGE_UPDATE_INFORMATION="gh-releases-zsync|MvCraK|moonlight-qt|$APPIMAGE_UPDATE_TAG|Moonlight-VPlus-*-${APPIMAGE_ARCH}.AppImage.zsync"
 
 pushd "$INSTALLER_FOLDER" || fail "Unable to enter install folder: $INSTALLER_FOLDER"
 # Don't bundle libva (upstream 2026-09): the bundled build-environment libva cannot
