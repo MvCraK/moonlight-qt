@@ -46,6 +46,9 @@ win32|macx {
             # rustup is optional; a failure here just means the target is already present.
             ss_rust.commands += -rustup target add $$triple $$escape_expand(\\n\\t)
             macx: ss_rust.commands += MACOSX_DEPLOYMENT_TARGET=$$QMAKE_MACOSX_DEPLOYMENT_TARGET
+            # build-arch.bat exports CFLAGS=/GL for LTCG; cc-rs would then emit LTCG
+            # objects for ring's C code that a Rust static library cannot index.
+            win32: ss_rust.commands += set CFLAGS=&& set CXXFLAGS=&&
             ss_rust.commands += cargo build --release --locked \
                 --manifest-path $$shell_quote($$system_path($$SS_RUST_DIR/Cargo.toml)) \
                 --target $$triple --target-dir $$shell_quote($$system_path($$SS_CARGO_DIR)) \
