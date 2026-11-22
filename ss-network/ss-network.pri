@@ -43,16 +43,18 @@ win32|macx {
         ss_rust.commands =
         SS_PARTS =
         for (triple, SS_TRIPLES) {
-            # rustup is optional; a failure here just means the target is already present.
-            ss_rust.commands += -rustup target add $$triple $$escape_expand(\\n\\t)
-            macx: ss_rust.commands += MACOSX_DEPLOYMENT_TARGET=$$QMAKE_MACOSX_DEPLOYMENT_TARGET
-            # build-arch.bat exports CFLAGS=/GL for LTCG; cc-rs would then emit LTCG
-            # objects for ring's C code that a Rust static library cannot index.
-            win32: ss_rust.commands += set CFLAGS=&& set CXXFLAGS=&&
-            ss_rust.commands += cargo build --release --locked \
-                --manifest-path $$shell_quote($$system_path($$SS_RUST_DIR/Cargo.toml)) \
-                --target $$triple --target-dir $$shell_quote($$system_path($$SS_CARGO_DIR)) \
-                $$escape_expand(\\n\\t)
+            win32 {
+                # Clears the MSVC CFLAGS that would leak into ring's C build (see the script).
+                ss_rust.commands += $$shell_quote($$system_path($$SS_RUST_DIR/cargo-build.cmd)) $$triple \
+                    $$shell_quote($$system_path($$SS_CARGO_DIR)) $$escape_expand(\\n\\t)
+            } else {
+                # rustup is optional; a failure here just means the target is already present.
+                ss_rust.commands += -rustup target add $$triple $$escape_expand(\\n\\t)
+                ss_rust.commands += env -u CFLAGS -u CXXFLAGS MACOSX_DEPLOYMENT_TARGET=$$QMAKE_MACOSX_DEPLOYMENT_TARGET \
+                    cargo build --release --locked \
+                    --manifest-path $$shell_quote($$SS_RUST_DIR/Cargo.toml) \
+                    --target $$triple --target-dir $$shell_quote($$SS_CARGO_DIR) $$escape_expand(\\n\\t)
+            }
             SS_PARTS += $$shell_quote($$SS_CARGO_DIR/$$triple/release/libss_network.a)
         }
         macx: ss_rust.commands += lipo -create $$SS_PARTS -output $$shell_quote($$SS_LIB)
