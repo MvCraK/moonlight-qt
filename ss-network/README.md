@@ -7,6 +7,7 @@
 - **Qt 网络**（配对/轮询 HTTP、USB 转发、文件映射等）：经应用级 `QNetworkProxyFactory` 只把路由主机交给本地 SOCKS5（Rust 实现），其他地址仍然直连。
 - 走 SS 的主机按 VPN 处理：串流使用远程模式，包长 1024。
 - 组网开关不持久化。配置和订阅解析出的节点会保存在 `AppDataLocation/ss-network.json`，但每次启动组网都是关闭的。
+- 断开组网时，已有代理连接会关闭，正在使用组网的串流需要重新连接。
 - Linux / Steam Link 不编译 native 部分，工具栏入口自动隐藏。
 
 ## 界面

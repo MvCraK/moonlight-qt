@@ -16,6 +16,7 @@ use shadowsocks::{
 };
 use std::{
     ffi::CStr,
+    future::Future,
     net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs},
     os::raw::c_char,
     slice,
@@ -26,6 +27,7 @@ use tokio::{
     io::{copy_bidirectional, AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     runtime::Runtime,
+    sync::watch,
     time::timeout,
 };
 
@@ -73,16 +75,22 @@ pub struct UdpNode {
     key: Box<[u8]>,
     host: ServerAddr,
     resolved: Mutex<Option<SocketAddrV4>>,
+    disconnected: watch::Receiver<bool>,
 }
 impl UdpNode {
-    fn new(endpoint: &Endpoint) -> Arc<Self> {
+    fn new(endpoint: &Endpoint, disconnected: watch::Receiver<bool>) -> Arc<Self> {
         let config = &endpoint.config;
         Arc::new(Self {
             method: config.method(),
             key: config.key().into(),
             host: config.addr().clone(),
             resolved: Mutex::new(None),
+            disconnected,
         })
+    }
+    fn is_active(&self) -> bool {
+        // This receiver never marks updates as seen. The sole update revokes the route.
+        matches!(self.disconnected.has_changed(), Ok(false))
     }
     // Moonlight's media sockets are AF_INET, so the node must be reachable over IPv4.
     fn server(&self) -> Option<SocketAddrV4> {
@@ -112,6 +120,7 @@ struct Routes {
     home_udp_node: Arc<UdpNode>,
     company_udp_node: Arc<UdpNode>,
     ctx: SharedContext,
+    disconnected: watch::Sender<bool>,
 }
 
 static ROUTES: Mutex<Option<Arc<Routes>>> = Mutex::new(None);
@@ -120,24 +129,34 @@ static RUNTIME: OnceLock<Runtime> = OnceLock::new();
 #[no_mangle]
 pub unsafe extern "C" fn vss_config(json: *const c_char) -> bool {
     if json.is_null() {
-        *ROUTES.lock().unwrap() = None;
+        let mut routes = ROUTES.lock().unwrap();
+        if let Some(previous) = routes.take() {
+            previous.disconnected.send_replace(true);
+        }
         return true;
     }
-    let Some(routes) = (|| {
+    let Some((home_tcp, home_udp, company)) = (|| {
         let [tcp, udp, company]: [Node; 3] =
             serde_json::from_slice(CStr::from_ptr(json).to_bytes()).ok()?;
-        let (home_tcp, home_udp, company) = (tcp.config()?, udp.config()?, company.config()?);
-        Some(Routes {
-            home_udp_node: UdpNode::new(&home_udp),
-            company_udp_node: UdpNode::new(&company),
-            home_tcp,
-            company,
-            ctx: Context::new_shared(ServerType::Local),
-        })
+        Some((tcp.config()?, udp.config()?, company.config()?))
     })() else {
         return false;
     };
-    *ROUTES.lock().unwrap() = Some(Arc::new(routes));
+    let mut routes = ROUTES.lock().unwrap();
+    // Refreshes affect new connections. Disconnect also revokes connections that predate them.
+    let disconnected = routes.as_ref().map_or_else(
+        || watch::channel(false).0,
+        |previous| previous.disconnected.clone(),
+    );
+    let inactive = disconnected.subscribe();
+    *routes = Some(Arc::new(Routes {
+        home_udp_node: UdpNode::new(&home_udp, inactive.clone()),
+        company_udp_node: UdpNode::new(&company, inactive),
+        home_tcp,
+        company,
+        ctx: Context::new_shared(ServerType::Local),
+        disconnected,
+    }));
     true
 }
 
@@ -156,6 +175,9 @@ pub unsafe extern "C" fn vss_udp_acquire(ip: u32, server_ip: *mut u32, server_po
         _ => return std::ptr::null(),
     };
     let Some(server) = node.server() else { return std::ptr::null() };
+    if !node.is_active() {
+        return std::ptr::null();
+    }
     *server_ip = u32::from(*server.ip());
     *server_port = server.port();
     Arc::into_raw(node.clone())
@@ -173,6 +195,11 @@ pub unsafe extern "C" fn vss_udp_overhead(node: *const UdpNode) -> usize {
     (*node).overhead()
 }
 
+#[no_mangle]
+pub unsafe extern "C" fn vss_udp_is_active(node: *const UdpNode) -> bool {
+    (*node).is_active()
+}
+
 /// Writes `salt | AEAD(ATYP_V4 ip port | payload) | tag` to `out`.
 #[no_mangle]
 pub unsafe extern "C" fn vss_udp_encrypt(
@@ -187,7 +214,7 @@ pub unsafe extern "C" fn vss_udp_encrypt(
     let node = &*node;
     let salt_len = node.method.salt_len();
     let total = len + node.overhead();
-    if total > cap {
+    if !node.is_active() || total > cap {
         return -1;
     }
     let out = slice::from_raw_parts_mut(out, total);
@@ -215,7 +242,7 @@ pub unsafe extern "C" fn vss_udp_decrypt(
 ) -> isize {
     let node = &*node;
     let (salt_len, tag_len) = (node.method.salt_len(), node.method.tag_len());
-    if len < node.overhead() {
+    if !node.is_active() || len < node.overhead() {
         return -1;
     }
     let packet = slice::from_raw_parts_mut(buf, len);
@@ -259,11 +286,23 @@ fn loopback(port: u16) -> SocketAddr {
     (Ipv4Addr::LOCALHOST, port).into()
 }
 
+async fn while_connected<T>(
+    mut disconnected: watch::Receiver<bool>,
+    operation: impl Future<Output = T>,
+) -> Option<T> {
+    tokio::select! {
+        biased;
+        _ = disconnected.wait_for(|closed| *closed) => None,
+        result = operation => Some(result),
+    }
+}
+
 /// Opens a one-shot loopback TCP relay that accepts only `source`.
 fn forward_tcp(ip: u32, port: u16, source: u16) -> Option<u16> {
     let routes = current()?;
     let node = tcp_node(&routes, ip)?;
     let ctx = routes.ctx.clone();
+    let disconnected = routes.disconnected.subscribe();
     let addr = Address::SocketAddress((Ipv4Addr::from(ip), port).into());
     let runtime = runtime();
     let _guard = runtime.enter();
@@ -271,7 +310,7 @@ fn forward_tcp(ip: u32, port: u16, source: u16) -> Option<u16> {
     let local = listener.local_addr().ok()?.port();
     listener.set_nonblocking(true).ok()?;
     let listener = TcpListener::from_std(listener).ok()?;
-    runtime.spawn(async move {
+    runtime.spawn(while_connected(disconnected, async move {
         let accept = async {
             loop {
                 let (s, peer) = listener.accept().await.ok()?;
@@ -297,7 +336,7 @@ fn forward_tcp(ip: u32, port: u16, source: u16) -> Option<u16> {
             return;
         };
         let _ = copy_bidirectional(&mut client, &mut proxy).await;
-    });
+    }));
     Some(local)
 }
 
@@ -373,9 +412,27 @@ async fn socks_session(mut client: TcpStream) -> std::io::Result<()> {
     let Ok(Ok(Some((ip, port)))) = timeout(Duration::from_secs(10), handshake).await else {
         return Ok(());
     };
-    let Some((node, ctx)) = current().and_then(|r| Some((tcp_node(&r, ip)?, r.ctx.clone()))) else {
+    let Some(routes) = current() else {
         return socks_reply(&mut client, 2).await; // not allowed by ruleset
     };
+    let Some(node) = tcp_node(&routes, ip) else {
+        return socks_reply(&mut client, 2).await;
+    };
+    let ctx = routes.ctx.clone();
+    let disconnected = routes.disconnected.subscribe();
+    drop(routes);
+    while_connected(disconnected, forward_socks(client, ip, port, node, ctx))
+        .await
+        .unwrap_or(Ok(()))
+}
+
+async fn forward_socks(
+    mut client: TcpStream,
+    ip: u32,
+    port: u16,
+    node: Endpoint,
+    ctx: SharedContext,
+) -> std::io::Result<()> {
     let mut opts = shadowsocks::net::ConnectOpts::default();
     opts.tcp.nodelay = true;
     opts.tcp.fastopen = node.tfo;
@@ -476,6 +533,15 @@ mod tests {
         serde_json::json!({"server":"127.0.0.1","port":port,"cipher":"aes-256-gcm","password":key})
     }
 
+    async fn assert_relay_closed(stream: &mut TcpStream) {
+        match timeout(Duration::from_secs(2), stream.read(&mut [0])).await {
+            Ok(Ok(0)) => (),
+            Ok(Err(err)) if matches!(err.kind(), std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted) => (),
+            result => panic!("established relay did not close after disconnect: {result:?}"),
+        }
+    }
+
     // Distinct listeners and keys make swapping either home subscription observable.
     #[tokio::test(flavor = "multi_thread")]
     async fn split_routes_preserve_destinations_and_return_traffic() {
@@ -501,8 +567,9 @@ mod tests {
                                     format!("{target_ip}:50201")
                                 );
                                 let mut payload = [0; 4];
-                                stream.read_exact(&mut payload).await.unwrap();
-                                stream.write_all(&payload).await.unwrap();
+                                while stream.read_exact(&mut payload).await.is_ok() {
+                                    stream.write_all(&payload).await.unwrap();
+                                }
                             });
                         }
                     });
@@ -520,6 +587,7 @@ mod tests {
             assert!(unsafe { vss_config(json.as_ptr()) });
             let (mut sip, mut sport) = (0u32, 0u16);
             assert!(unsafe { vss_udp_acquire(0x0a020201, &mut sip, &mut sport) }.is_null());
+            let mut tcp_relays = Vec::new();
             for ip in [0x0a000050u32, 0x0a010146] {
                 let client = TcpSocket::new_v4().unwrap();
                 client.bind(loopback(0)).unwrap();
@@ -529,6 +597,7 @@ mod tests {
                 let mut result = [0; 4];
                 stream.read_exact(&mut result).await.unwrap();
                 assert_eq!(&result, b"ping");
+                tcp_relays.push(stream);
 
                 // Direct UDP: the same socket talks to the SS server with in-place crypto.
                 let node = unsafe { vss_udp_acquire(ip, &mut sip, &mut sport) };
@@ -577,6 +646,7 @@ mod tests {
             let mut echo = [0; 4];
             stream.read_exact(&mut echo).await.unwrap();
             assert_eq!(&echo, b"ping");
+            tcp_relays.push(stream);
             // Unrouted destinations are refused.
             let mut stream = TcpStream::connect(loopback(socks)).await.unwrap();
             stream.write_all(&[5, 1, 0]).await.unwrap();
@@ -585,8 +655,48 @@ mod tests {
             stream.read_exact(&mut reply).await.unwrap();
             assert_eq!(reply[1], 2);
 
+            let ip = 0x0a000050;
+            let node = unsafe { vss_udp_acquire(ip, &mut sip, &mut sport) };
+            assert!(!node.is_null());
+            let mut packet = [0; 128];
+            let payload = b"udp";
+            let send = |packet: &mut [u8]| unsafe {
+                vss_udp_encrypt(node, ip, 50301, payload.as_ptr(), payload.len(),
+                                packet.as_mut_ptr(), packet.len())
+            };
+            let len = send(&mut packet);
+            assert!(len > 0);
+            let relay_source = TcpSocket::new_v4().unwrap();
+            relay_source.bind(loopback(0)).unwrap();
+            let pending_relay = vss_open_tcp(ip, 50201, relay_source.local_addr().unwrap().port());
+            assert_ne!(pending_relay, 0);
+
+            assert!(unsafe { vss_config(json.as_ptr()) });
+            assert!(unsafe { vss_udp_is_active(node) });
             assert!(unsafe { vss_config(std::ptr::null()) });
-            assert_eq!(vss_open_tcp(0x0a000050, 50301, 44000), 0);
+            for relay in &mut tcp_relays {
+                assert_relay_closed(relay).await;
+            }
+            assert_eq!(vss_open_tcp(ip, 50301, 44000), 0);
+            assert!(!unsafe { vss_udp_is_active(node) });
+            assert_eq!(send(&mut packet), -1);
+            assert_eq!(unsafe {
+                vss_udp_decrypt(node, packet.as_mut_ptr(), len as usize, &mut sip, &mut sport)
+            }, -1);
+
+            assert!(unsafe { vss_config(json.as_ptr()) });
+            // If accept raced the cancellation, the stale listener must still close the connection.
+            if let Ok(mut pending) = relay_source.connect(loopback(pending_relay)).await {
+                assert_relay_closed(&mut pending).await;
+            }
+            assert_eq!(send(&mut packet), -1);
+            let new_node = unsafe { vss_udp_acquire(ip, &mut sip, &mut sport) };
+            assert!(!new_node.is_null() && unsafe { vss_udp_is_active(new_node) });
+            unsafe {
+                vss_udp_release(node);
+                vss_udp_release(new_node);
+                vss_config(std::ptr::null());
+            }
         })
         .await
         .unwrap();

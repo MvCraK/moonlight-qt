@@ -51,6 +51,7 @@ extern uint16_t vss_open_tcp(uint32_t ip, uint16_t port, uint16_t source);
 extern const void *vss_udp_acquire(uint32_t ip, uint32_t *server_ip, uint16_t *server_port);
 extern void vss_udp_release(const void *node);
 extern size_t vss_udp_overhead(const void *node);
+extern bool vss_udp_is_active(const void *node);
 extern intptr_t vss_udp_encrypt(const void *node, uint32_t ip, uint16_t port, const void *data,
                                 size_t len, void *out, size_t cap);
 extern intptr_t vss_udp_decrypt(const void *node, void *buf, size_t len, uint32_t *ip,
@@ -200,6 +201,15 @@ static void set_unreachable(void)
 #endif
 }
 
+/* Keep the flow attached until close so an old routed socket cannot fall back to direct I/O. */
+static bool flow_is_active(const struct flow *f)
+{
+    if (vss_udp_is_active(f->node))
+        return true;
+    set_unreachable();
+    return false;
+}
+
 /* Encrypts plaintext for peer into out; returns the datagram length or -1. */
 static intptr_t seal(struct flow *f, const struct sockaddr_in *peer, const void *plain, size_t n,
                      unsigned char *out, size_t cap)
@@ -220,7 +230,7 @@ static intptr_t unseal(struct flow *f, const struct sockaddr_in *from, size_t fr
     uint32_t ip;
     uint16_t port;
     intptr_t plain = vss_udp_decrypt(f->node, f->scratch, n, &ip, &port);
-    if (plain < 0)
+    if (plain < 0 || !vss_udp_is_active(f->node))
         return -1;
     memset(source, 0, sizeof(*source));
     source->sin_family = AF_INET;
@@ -317,7 +327,9 @@ static int send_direct(SOCKET s, struct flow *f, const struct sockaddr_in *peer,
     }
     intptr_t len = seal(f, peer, plain, n, out, cap);
     int rc;
-    if (len < 0) {
+    if (!flow_is_active(f)) {
+        rc = SOCKET_ERROR;
+    } else if (len < 0) {
         WSASetLastError(WSAEMSGSIZE);
         rc = SOCKET_ERROR;
     } else if (ctl) {
@@ -408,6 +420,8 @@ int WSAAPI ss_recvfrom(SOCKET s, char *buf, int len, int flags, struct sockaddr 
     struct flow *f = flow_of(s);
     if (!f)
         return recvfrom(s, buf, len, flags, from, fromlen);
+    if (!flow_is_active(f))
+        return SOCKET_ERROR;
     AcquireSRWLockExclusive(&f->recv_lock);
     struct sockaddr_in raw_from, src;
     int raw_len = sizeof(raw_from);
@@ -417,7 +431,8 @@ int WSAAPI ss_recvfrom(SOCKET s, char *buf, int len, int flags, struct sockaddr 
     if (n >= 0) {
         intptr_t plain = unseal(f, &raw_from, (size_t)raw_len, (size_t)n, &src);
         if (plain < 0) {
-            WSASetLastError(WSAEWOULDBLOCK);
+            if (flow_is_active(f))
+                WSASetLastError(WSAEWOULDBLOCK);
             rc = SOCKET_ERROR;
         } else {
             int copy = plain < len ? (int)plain : len;
@@ -442,6 +457,8 @@ static INT PASCAL ss_WSARecvMsg(SOCKET s, LPWSAMSG msg, LPDWORD received,
     struct flow *f = flow_of(s);
     if (!f || overlapped || completion)
         return real_recvmsg(s, msg, received, overlapped, completion);
+    if (!flow_is_active(f))
+        return SOCKET_ERROR;
     AcquireSRWLockExclusive(&f->recv_lock);
     struct sockaddr_in raw_from, src;
     WSABUF scratch = { SCRATCH_SIZE, (CHAR *)f->scratch };
@@ -455,7 +472,8 @@ static INT PASCAL ss_WSARecvMsg(SOCKET s, LPWSAMSG msg, LPDWORD received,
     if (rc == 0) {
         intptr_t plain = unseal(f, &raw_from, (size_t)raw.namelen, n, &src);
         if (plain < 0) {
-            WSASetLastError(WSAEWOULDBLOCK);
+            if (flow_is_active(f))
+                WSASetLastError(WSAEWOULDBLOCK);
             rc = SOCKET_ERROR;
         } else {
             size_t off = 0;
@@ -530,7 +548,9 @@ static ssize_t send_direct(int fd, struct flow *f, const struct sockaddr_in *pee
     }
     intptr_t len = seal(f, peer, plain, n, out, cap);
     ssize_t rc;
-    if (len < 0) {
+    if (!flow_is_active(f)) {
+        rc = -1;
+    } else if (len < 0) {
         errno = EMSGSIZE;
         rc = -1;
     } else if (ctl) {
@@ -621,7 +641,7 @@ static ssize_t recv_direct(int fd, struct flow *f, int flags, struct sockaddr_in
                            void *control, socklen_t *controllen)
 {
     flags &= ~MSG_TRUNC;
-    for (;;) {
+    while (flow_is_active(f)) {
         struct sockaddr_in from;
         struct iovec iov = { f->scratch, SCRATCH_SIZE };
         struct msghdr hdr;
@@ -647,6 +667,7 @@ static ssize_t recv_direct(int fd, struct flow *f, int flags, struct sockaddr_in
         }
         /* Blocking (possibly SO_RCVTIMEO) socket: wait for the next datagram. */
     }
+    return -1;
 }
 
 ssize_t ss_recvfrom(int fd, void *buf, size_t n, int flags, struct sockaddr *peer, socklen_t *len)
