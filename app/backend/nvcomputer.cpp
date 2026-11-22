@@ -6,7 +6,7 @@
 #include <QHostInfo>
 #include <QNetworkInterface>
 #include <QNetworkProxy>
-#include "ssnetwork.h" // SS-NETWORK [MODIFIED]
+#include "../../ss-network/qt/ssnetwork.h" // SS-NETWORK [MODIFIED]
 
 #define SER_NAME "hostname"
 #define SER_UUID "uuid"

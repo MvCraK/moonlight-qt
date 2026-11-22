@@ -1,8 +1,9 @@
 // SS-NETWORK extension (see ss-network/README.md).
 #pragma once
 
-#ifdef SS_NETWORK_STUB
-// Steam Link (Qt 5.14) build: no SS support, only what the upstream hooks call.
+#ifndef SS_NETWORK_APP
+// Builds without the extension (Steam Link on Qt 5.14, test projects): header-only
+// stub providing just what the upstream hooks call.
 #include <QHostAddress>
 #include <QString>
 
@@ -113,4 +114,4 @@ private:
     bool m_FetchFailed = false;
 };
 
-#endif // SS_NETWORK_STUB
+#endif // SS_NETWORK_APP

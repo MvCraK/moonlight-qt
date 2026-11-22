@@ -5,10 +5,9 @@
 INCLUDEPATH += $$PWD/qt
 HEADERS += $$PWD/qt/ssnetwork.h
 
-config_SL {
-    # Steam Link builds against Qt 5.14: header-only stub, no toolbar entry.
-    DEFINES += SS_NETWORK_STUB
-} else {
+!config_SL {
+    # Steam Link (Qt 5.14) and test projects use the header-only stub instead.
+    DEFINES += SS_NETWORK_APP
     SOURCES += $$PWD/qt/ssnetwork.cpp
     RESOURCES += $$PWD/qml/ss-network.qrc
 }

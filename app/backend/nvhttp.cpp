@@ -17,7 +17,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <memory>
-#include "ssnetwork.h" // SS-NETWORK [MODIFIED]
+#include "../../ss-network/qt/ssnetwork.h" // SS-NETWORK [MODIFIED]
 
 #define FAST_FAIL_TIMEOUT_MS 2000
 #define REQUEST_TIMEOUT_MS 5000
