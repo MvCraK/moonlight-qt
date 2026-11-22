@@ -1,0 +1,19 @@
+# SS-NETWORK extension (see ss-network/README.md)
+[package]
+name = "ss_network"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+shadowsocks = { version = "=1.24.0", default-features = false, features = ["aead-cipher"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "sync", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+[profile.release]
+panic = "abort"

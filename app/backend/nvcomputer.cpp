@@ -6,6 +6,7 @@
 #include <QHostInfo>
 #include <QNetworkInterface>
 #include <QNetworkProxy>
+#include "../../ss-network/qt/ssnetwork.h" // SS-NETWORK [MODIFIED]
 
 #define SER_NAME "hostname"
 #define SER_UUID "uuid"
@@ -368,6 +369,12 @@ NvComputer::ReachabilityType NvComputer::getActiveAddressReachability() const
         if (activeAddress.isNull()) {
             return ReachabilityType::RI_UNKNOWN;
         }
+
+        // SS-NETWORK [MODIFIED] BEGIN: hosts reached through SS are remote (VPN-like)
+        if (SsNetwork::routes(activeAddress.address())) {
+            return ReachabilityType::RI_VPN;
+        }
+        // SS-NETWORK [MODIFIED] END
 
         if (m_HasActiveAddressReachability &&
                 m_ActiveAddressReachabilityAddress == activeAddress) {

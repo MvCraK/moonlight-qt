@@ -211,6 +211,9 @@ jobs:
 
         echo Build Windows x64 completed successfully!
 
+    - name: Test Shadowsocks routing and disconnect
+      run: cargo test --release --locked --manifest-path ss-network/rust/Cargo.toml
+
     - name: Test input & overlay logic
       shell: cmd
       run: |
@@ -374,6 +377,33 @@ jobs:
         overwrite: true
         name: MoonlightSetup-r${{ env.BUILD_NUMBER }}.exe
         path: build/installer-Release/MoonlightSetup-*.exe
+
+  smoke-windows:
+    name: Smoke test Windows startup (${{ matrix.arch }})
+    needs: build-windows
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - arch: x64
+          runner: windows-2022
+        - arch: arm64
+          runner: windows-11-arm
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        persist-credentials: false
+    - uses: actions/download-artifact@v4
+      with:
+        name: Moonlight-VPlus-Portable-${{ matrix.arch }}-r${{ env.BUILD_NUMBER }}
+        path: package
+    - name: Start Moonlight from the portable package
+      shell: pwsh
+      run: |
+        $archive = Get-Item -Path 'package/Moonlight-VPlus-Portable-*.zip'
+        ./scripts/test-windows-startup.ps1 -Archive $archive.FullName
 
   build-macos:
     runs-on: macos-15
@@ -881,7 +911,7 @@ jobs:
 
   release:
     if: github.repository == 'MvCraK/moonlight-qt' && github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
-    needs: [qml-lint, version-tests, cpp-format, build-windows, build-macos, build-linux, build-steamlink]
+    needs: [qml-lint, version-tests, cpp-format, build-windows, smoke-windows, build-macos, build-linux, build-steamlink]
     runs-on: ubuntu-latest
     permissions:
       contents: write
