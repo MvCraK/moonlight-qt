@@ -1,6 +1,22 @@
 // SS-NETWORK extension (see ss-network/README.md).
 #pragma once
 
+#ifdef SS_NETWORK_STUB
+// Steam Link (Qt 5.14) build: no SS support, only what the upstream hooks call.
+#include <QHostAddress>
+#include <QString>
+
+class QNetworkProxyFactory;
+
+class SsNetwork
+{
+public:
+    static bool routes(const QHostAddress&) { return false; }
+    static bool routes(const QString&) { return false; }
+    static QNetworkProxyFactory* createProxyFactory() { return nullptr; }
+};
+#else
+
 #include <QObject>
 #include <QHostAddress>
 #include <QJsonObject>
@@ -31,7 +47,14 @@ class SsNetwork : public QObject
     Q_PROPERTY(qint64 receivedBytes READ receivedBytes NOTIFY trafficChanged)
 
 public:
-    enum Status { Unavailable, Off, Checking, Online, Degraded };
+    enum Status
+    {
+        Unavailable,
+        Off,
+        Checking,
+        Online,
+        Degraded
+    };
     Q_ENUM(Status)
 
     static SsNetwork* instance();
@@ -74,12 +97,12 @@ private:
     void fail();
     void setBusy(const QString& action);
 
-    QJsonObject m_State;         // {nodes:[tcp,udp,company], updated, config:{homeTcp,homeUdp,company}}
+    QJsonObject m_State; // {nodes:[tcp,udp,company], updated, config:{homeTcp,homeUdp,company}}
     QString m_BusyAction;
     bool m_Failed = false;
     int m_PendingProbes = 0;
     qint64 m_ProbedAt = 0;
-    QVariantList m_Probes;       // per node: latency ms, -1 unreachable, -2 not probed (UDP only)
+    QVariantList m_Probes; // per node: latency ms, -1 unreachable, -2 not probed (UDP only)
     QNetworkAccessManager* m_Nam = nullptr;
     QTimer* m_TrafficTimer = nullptr;
 
@@ -89,3 +112,5 @@ private:
     int m_PendingFetches = 0;
     bool m_FetchFailed = false;
 };
+
+#endif // SS_NETWORK_STUB

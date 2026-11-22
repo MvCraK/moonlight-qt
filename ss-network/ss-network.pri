@@ -4,8 +4,14 @@
 # the toolbar entry stays hidden.
 INCLUDEPATH += $$PWD/qt
 HEADERS += $$PWD/qt/ssnetwork.h
-SOURCES += $$PWD/qt/ssnetwork.cpp
-RESOURCES += $$PWD/qml/ss-network.qrc
+
+config_SL {
+    # Steam Link builds against Qt 5.14: header-only stub, no toolbar entry.
+    DEFINES += SS_NETWORK_STUB
+} else {
+    SOURCES += $$PWD/qt/ssnetwork.cpp
+    RESOURCES += $$PWD/qml/ss-network.qrc
+}
 
 win32|macx {
     !config_SL {
