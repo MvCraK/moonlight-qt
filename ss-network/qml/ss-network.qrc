@@ -1,0 +1,9 @@
+<!DOCTYPE RCC><RCC version="1.0">
+<!-- SS-NETWORK extension -->
+<qresource prefix="/ss-network">
+    <file>SsNetworkButton.qml</file>
+    <file>SsNetworkPopup.qml</file>
+    <file>SsStrings.js</file>
+    <file>ss-network.svg</file>
+</qresource>
+</RCC>

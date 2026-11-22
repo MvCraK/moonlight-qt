@@ -40,6 +40,9 @@ isEmpty(MOONLIGHT_NUMERIC_VERSION): MOONLIGHT_NUMERIC_VERSION = $$cat(version.tx
 TEMPLATE = app
 
 include(../file-mapping/file-mapping.pri)
+# SS-NETWORK [MODIFIED] BEGIN
+include(../ss-network/ss-network.pri)
+# SS-NETWORK [MODIFIED] END
 
 # The following define makes your compiler emit warnings if you use
 # any feature of Qt which has been marked as deprecated (the exact warnings

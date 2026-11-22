@@ -782,6 +782,14 @@ ApplicationWindow {
                 }
             }
 
+            // SS-NETWORK [MODIFIED] BEGIN
+            Loader {
+                source: "qrc:/ss-network/SsNetworkButton.qml"
+                visible: item !== null && item.shown
+                Layout.preferredHeight: parent.height
+            }
+            // SS-NETWORK [MODIFIED] END
+
             NavigableToolButton {
                 id: settingsButton
 

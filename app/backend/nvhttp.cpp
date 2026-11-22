@@ -17,6 +17,7 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <memory>
+#include "ssnetwork.h" // SS-NETWORK [MODIFIED]
 
 #define FAST_FAIL_TIMEOUT_MS 2000
 #define REQUEST_TIMEOUT_MS 5000
@@ -45,6 +46,9 @@ NvHTTP::NvHTTP(NvAddress address, uint16_t httpsPort, QSslCertificate serverCert
     // Never use a proxy server
     QNetworkProxy noProxy(QNetworkProxy::NoProxy);
     m_Nam->setProxy(noProxy);
+    // SS-NETWORK [MODIFIED] BEGIN: routed hosts go through the SS SOCKS endpoint
+    m_Nam->setProxyFactory(SsNetwork::createProxyFactory());
+    // SS-NETWORK [MODIFIED] END
 }
 
 NvHTTP::NvHTTP(NvComputer* computer, QNetworkAccessManager* nam) :

@@ -123,3 +123,7 @@ contains(QMAKE_COMPILER, msvc) {
 *-g++|*-clang* {
     QMAKE_CFLAGS_WARN_ON += -Wno-unused-parameter
 }
+
+# SS-NETWORK [MODIFIED] BEGIN
+include(../ss-network/ss-network-common-c.pri)
+# SS-NETWORK [MODIFIED] END
