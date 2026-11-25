@@ -23,7 +23,7 @@ win32|macx {
             else: SS_TRIPLES = x86_64-pc-windows-msvc
             SS_LIB = $$SS_CARGO_DIR/$$first(SS_TRIPLES)/release/ss_network.lib
             # Rust std/tokio system dependencies for a static MSVC library.
-            LIBS += ws2_32.lib userenv.lib ntdll.lib advapi32.lib bcrypt.lib kernel32.lib synchronization.lib
+            LIBS += ws2_32.lib iphlpapi.lib userenv.lib ntdll.lib advapi32.lib bcrypt.lib kernel32.lib synchronization.lib
             # The app links with -guard:ehcont, but Rust's precompiled std and ring's
             # assembly carry no EH-continuation metadata (stable Rust cannot emit it).
             # The core is built with panic=abort, so no exception ever unwinds through

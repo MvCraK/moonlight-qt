@@ -601,6 +601,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
+name = "lru_time_cache"
+version = "0.11.11"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9106e1d747ffd48e6be5bb2d97fa706ed25b144fbee4d5c02eae110cd8d6badd"
+
+[[package]]
 name = "md-5"
 version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -961,6 +967,7 @@ version = "1.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "482831bf9d55acf3c98e211b6c852c3dfdf1d1b0d23fdf1d887c5a4b2acad4e4"
 dependencies = [
+ "aes",
  "base64",
  "blake3",
  "byte_string",
@@ -970,8 +977,10 @@ dependencies = [
  "futures",
  "libc",
  "log",
+ "lru_time_cache",
  "percent-encoding",
  "pin-project",
+ "rand",
  "sealed",
  "sendfd",
  "serde",
@@ -994,7 +1003,10 @@ version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d038a3d17586f1c1ab3c1c3b9e4d5ef8fba98fb3890ad740c8487038b2e2ca5"
 dependencies = [
+ "aes",
  "aes-gcm",
+ "blake3",
+ "bytes",
  "cfg-if",
  "chacha20poly1305",
  "hkdf",
@@ -1071,6 +1083,9 @@ dependencies = [
 name = "ss_network"
 version = "0.1.0"
 dependencies = [
+ "aes",
+ "bytes",
+ "libc",
  "serde",
  "serde_json",
  "serde_yaml",

@@ -31,6 +31,9 @@
 #include <string.h>
 
 #ifdef _WIN32
+#ifndef IP_UNICAST_IF
+#define IP_UNICAST_IF 31
+#endif
 typedef SOCKET ss_socket;
 typedef SRWLOCK ss_lock;
 #define SS_LOCK_INIT SRWLOCK_INIT
@@ -38,6 +41,9 @@ typedef SRWLOCK ss_lock;
 #define ss_lock_give(l) ReleaseSRWLockExclusive(l)
 #else
 #include <pthread.h>
+#ifndef IP_BOUND_IF
+#define IP_BOUND_IF 25
+#endif
 typedef int ss_socket;
 typedef pthread_mutex_t ss_lock;
 #define SS_LOCK_INIT PTHREAD_MUTEX_INITIALIZER
@@ -47,6 +53,7 @@ typedef pthread_mutex_t ss_lock;
 
 /* Rust side (ss-network/rust). */
 extern bool vss_config(const char *json);
+extern uint32_t vss_bypass_if_index(void);
 extern uint16_t vss_open_tcp(uint32_t ip, uint16_t port, uint16_t source);
 extern const void *vss_udp_acquire(uint32_t ip, uint32_t *server_ip, uint16_t *server_port);
 extern void vss_udp_release(const void *node);
@@ -54,17 +61,19 @@ extern size_t vss_udp_overhead(const void *node);
 extern bool vss_udp_is_active(const void *node);
 extern intptr_t vss_udp_encrypt(const void *node, uint32_t ip, uint16_t port, const void *data,
                                 size_t len, void *out, size_t cap);
-extern intptr_t vss_udp_decrypt(const void *node, void *buf, size_t len, uint32_t *ip,
-                                uint16_t *port);
+extern intptr_t vss_udp_decrypt_view(const void *node, void *buf, size_t len, size_t *offset,
+                                     uint32_t *ip, uint16_t *port);
 
 #define MAX_FLOWS 64
 #define SCRATCH_SIZE 65536
 #define SEND_STACK 2048
+#define SIP022_EMPTY_PAD_MAX 900
 
 struct flow
 {
     const void *node;
     uint32_t prefix; /* destination /24 this socket is bound to */
+    atomic_uint_fast32_t bypass_if; /* physical interface bound via IP_BOUND_IF / IP_UNICAST_IF */
     struct sockaddr_in server;
     size_t overhead;
     ss_lock recv_lock; /* guards scratch; one receiver per socket in practice */
@@ -98,6 +107,31 @@ uint64_t ss_shim_received_bytes(void)
 }
 
 /* ---- helpers -------------------------------------------------------------- */
+
+static void apply_bypass_if(ss_socket s, uint32_t if_index)
+{
+#ifdef _WIN32
+    DWORD net_idx = htonl(if_index);
+    setsockopt(s, IPPROTO_IP, IP_UNICAST_IF, (const char *)&net_idx, sizeof(net_idx));
+#elif defined(__APPLE__)
+    uint32_t idx = if_index;
+    setsockopt(s, IPPROTO_IP, IP_BOUND_IF, &idx, sizeof(idx));
+#else
+    (void)s;
+    (void)if_index;
+#endif
+}
+
+static uint32_t ensure_bypass_if(ss_socket s, struct flow *f)
+{
+    uint32_t want = vss_bypass_if_index();
+    uint32_t have = (uint32_t)atomic_load_explicit(&f->bypass_if, memory_order_relaxed);
+    if (want != have) {
+        apply_bypass_if(s, want);
+        atomic_store_explicit(&f->bypass_if, want, memory_order_relaxed);
+    }
+    return want;
+}
 
 static uint32_t routed_prefix(const struct sockaddr *peer, size_t len)
 {
@@ -151,8 +185,13 @@ static struct flow *flow_for_send(ss_socket s, uint32_t prefix, uint32_t ip)
             unsigned char *scratch = malloc(SCRATCH_SIZE);
             if (f && scratch) {
                 ss_lock init = SS_LOCK_INIT;
+                uint32_t bypass_if = vss_bypass_if_index();
+                if (bypass_if != 0) {
+                    apply_bypass_if(s, bypass_if);
+                }
                 f->node = node;
                 f->prefix = prefix;
+                atomic_store_explicit(&f->bypass_if, bypass_if, memory_order_relaxed);
                 f->server.sin_family = AF_INET;
                 f->server.sin_port = htons(server_port);
                 f->server.sin_addr.s_addr = htonl(server_ip);
@@ -218,9 +257,9 @@ static intptr_t seal(struct flow *f, const struct sockaddr_in *peer, const void 
                            out, cap);
 }
 
-/* Decrypts scratch[0..n) from `from`; returns plaintext length or -1 to drop. */
+/* Decrypts scratch[0..n) from `from` in place; writes payload offset to *offset and returns length. */
 static intptr_t unseal(struct flow *f, const struct sockaddr_in *from, size_t fromlen, size_t n,
-                       struct sockaddr_in *source)
+                       size_t *offset, struct sockaddr_in *source)
 {
     if (fromlen < sizeof(*from) || from->sin_family != AF_INET ||
         from->sin_port != f->server.sin_port ||
@@ -229,9 +268,11 @@ static intptr_t unseal(struct flow *f, const struct sockaddr_in *from, size_t fr
     }
     uint32_t ip;
     uint16_t port;
-    intptr_t plain = vss_udp_decrypt(f->node, f->scratch, n, &ip, &port);
+    size_t start = 0;
+    intptr_t plain = vss_udp_decrypt_view(f->node, f->scratch, n, &start, &ip, &port);
     if (plain < 0 || !vss_udp_is_active(f->node))
         return -1;
+    *offset = start;
     memset(source, 0, sizeof(*source));
     source->sin_family = AF_INET;
     source->sin_port = htons(port);
@@ -319,12 +360,13 @@ static int send_direct(SOCKET s, struct flow *f, const struct sockaddr_in *peer,
                        size_t n, int flags, LPWSAMSG ctl, LPDWORD sent)
 {
     unsigned char stack[SEND_STACK];
-    size_t cap = n + f->overhead;
+    size_t cap = n + f->overhead + (n == 0 ? SIP022_EMPTY_PAD_MAX : 0);
     unsigned char *out = cap <= sizeof(stack) ? stack : malloc(cap);
     if (!out) {
         WSASetLastError(WSAENOBUFS);
         return SOCKET_ERROR;
     }
+    uint32_t bypass_if = ensure_bypass_if(s, f);
     intptr_t len = seal(f, peer, plain, n, out, cap);
     int rc;
     if (!flow_is_active(f)) {
@@ -332,8 +374,8 @@ static int send_direct(SOCKET s, struct flow *f, const struct sockaddr_in *peer,
     } else if (len < 0) {
         WSASetLastError(WSAEMSGSIZE);
         rc = SOCKET_ERROR;
-    } else if (ctl) {
-        /* Keep ancillary data (ENet's IP_PKTINFO source selection). */
+    } else if (ctl && bypass_if == 0) {
+        /* Keep ancillary data (ENet's IP_PKTINFO source selection) when not forcing a physical IF. */
         WSABUF buf = { (ULONG)len, (CHAR *)out };
         WSAMSG copy = *ctl;
         copy.name = (LPSOCKADDR)&f->server;
@@ -347,8 +389,15 @@ static int send_direct(SOCKET s, struct flow *f, const struct sockaddr_in *peer,
     } else {
         rc = sendto(s, (const char *)out, (int)len, flags, (const struct sockaddr *)&f->server,
                     sizeof(f->server));
-        if (rc >= 0)
-            rc = (int)n;
+        if (rc >= 0) {
+            if (ctl) {
+                if (sent)
+                    *sent = (DWORD)n;
+                rc = 0;
+            } else {
+                rc = (int)n;
+            }
+        }
     }
     if (out != stack)
         free(out);
@@ -429,14 +478,15 @@ int WSAAPI ss_recvfrom(SOCKET s, char *buf, int len, int flags, struct sockaddr 
                      &raw_len);
     int rc = n;
     if (n >= 0) {
-        intptr_t plain = unseal(f, &raw_from, (size_t)raw_len, (size_t)n, &src);
+        size_t start = 0;
+        intptr_t plain = unseal(f, &raw_from, (size_t)raw_len, (size_t)n, &start, &src);
         if (plain < 0) {
             if (flow_is_active(f))
                 WSASetLastError(WSAEWOULDBLOCK);
             rc = SOCKET_ERROR;
         } else {
             int copy = plain < len ? (int)plain : len;
-            memcpy(buf, f->scratch, (size_t)copy);
+            memcpy(buf, f->scratch + start, (size_t)copy);
             fill_source(&src, from, fromlen, true);
             if (plain > len) {
                 WSASetLastError(WSAEMSGSIZE);
@@ -470,7 +520,8 @@ static INT PASCAL ss_WSARecvMsg(SOCKET s, LPWSAMSG msg, LPDWORD received,
     DWORD n = 0;
     int rc = real_recvmsg(s, &raw, &n, NULL, NULL);
     if (rc == 0) {
-        intptr_t plain = unseal(f, &raw_from, (size_t)raw.namelen, n, &src);
+        size_t start = 0;
+        intptr_t plain = unseal(f, &raw_from, (size_t)raw.namelen, n, &start, &src);
         if (plain < 0) {
             if (flow_is_active(f))
                 WSASetLastError(WSAEWOULDBLOCK);
@@ -481,7 +532,7 @@ static INT PASCAL ss_WSARecvMsg(SOCKET s, LPWSAMSG msg, LPDWORD received,
                 size_t chunk = msg->lpBuffers[i].len;
                 if (chunk > (size_t)plain - off)
                     chunk = (size_t)plain - off;
-                memcpy(msg->lpBuffers[i].buf, f->scratch + off, chunk);
+                memcpy(msg->lpBuffers[i].buf, f->scratch + start + off, chunk);
                 off += chunk;
             }
             msg->Control.len = raw.Control.len;
@@ -540,12 +591,13 @@ static ssize_t send_direct(int fd, struct flow *f, const struct sockaddr_in *pee
                            const void *plain, size_t n, int flags, const struct msghdr *ctl)
 {
     unsigned char stack[SEND_STACK];
-    size_t cap = n + f->overhead;
+    size_t cap = n + f->overhead + (n == 0 ? SIP022_EMPTY_PAD_MAX : 0);
     unsigned char *out = cap <= sizeof(stack) ? stack : malloc(cap);
     if (!out) {
         errno = ENOMEM;
         return -1;
     }
+    uint32_t bypass_if = ensure_bypass_if(fd, f);
     intptr_t len = seal(f, peer, plain, n, out, cap);
     ssize_t rc;
     if (!flow_is_active(f)) {
@@ -553,8 +605,8 @@ static ssize_t send_direct(int fd, struct flow *f, const struct sockaddr_in *pee
     } else if (len < 0) {
         errno = EMSGSIZE;
         rc = -1;
-    } else if (ctl) {
-        /* Keep ancillary data (ENet's IP_PKTINFO source selection). */
+    } else if (ctl && bypass_if == 0) {
+        /* Keep ancillary data (ENet's IP_PKTINFO source selection) when not forcing a physical IF. */
         struct iovec iov = { out, (size_t)len };
         struct msghdr copy = *ctl;
         copy.msg_name = (void *)&f->server;
@@ -637,8 +689,8 @@ static bool nonblocking(int fd, int flags)
 
 /* Receives and decrypts one SS datagram into f->scratch; invalid datagrams are
  * dropped as if they never arrived. Caller holds f->recv_lock. */
-static ssize_t recv_direct(int fd, struct flow *f, int flags, struct sockaddr_in *source,
-                           void *control, socklen_t *controllen)
+static ssize_t recv_direct(int fd, struct flow *f, int flags, size_t *offset,
+                           struct sockaddr_in *source, void *control, socklen_t *controllen)
 {
     flags &= ~MSG_TRUNC;
     while (flow_is_active(f)) {
@@ -655,7 +707,7 @@ static ssize_t recv_direct(int fd, struct flow *f, int flags, struct sockaddr_in
         ssize_t n = recvmsg(fd, &hdr, flags);
         if (n < 0)
             return n;
-        intptr_t plain = unseal(f, &from, hdr.msg_namelen, (size_t)n, source);
+        intptr_t plain = unseal(f, &from, hdr.msg_namelen, (size_t)n, offset, source);
         if (plain >= 0) {
             if (controllen)
                 *controllen = hdr.msg_controllen;
@@ -676,10 +728,11 @@ ssize_t ss_recvfrom(int fd, void *buf, size_t n, int flags, struct sockaddr *pee
     if (!f)
         return recvfrom(fd, buf, n, flags, peer, len);
     struct sockaddr_in src;
+    size_t start = 0;
     ss_lock_take(&f->recv_lock);
-    ssize_t plain = recv_direct(fd, f, flags, &src, NULL, NULL);
+    ssize_t plain = recv_direct(fd, f, flags, &start, &src, NULL, NULL);
     if (plain >= 0) {
-        memcpy(buf, f->scratch, (size_t)plain < n ? (size_t)plain : n);
+        memcpy(buf, f->scratch + start, (size_t)plain < n ? (size_t)plain : n);
         fill_source(&src, peer, len, false);
         if (!(flags & MSG_TRUNC) && (size_t)plain > n)
             plain = (ssize_t)n;
@@ -694,9 +747,10 @@ ssize_t ss_recvmsg(int fd, struct msghdr *msg, int flags)
     if (!f)
         return recvmsg(fd, msg, flags);
     struct sockaddr_in src;
+    size_t start = 0;
     socklen_t controllen = msg->msg_controllen;
     ss_lock_take(&f->recv_lock);
-    ssize_t plain = recv_direct(fd, f, flags, &src, msg->msg_control, &controllen);
+    ssize_t plain = recv_direct(fd, f, flags, &start, &src, msg->msg_control, &controllen);
     if (plain >= 0) {
         msg->msg_controllen = controllen;
         msg->msg_flags = 0;
@@ -705,7 +759,7 @@ ssize_t ss_recvmsg(int fd, struct msghdr *msg, int flags)
             size_t chunk = msg->msg_iov[i].iov_len;
             if (chunk > (size_t)plain - off)
                 chunk = (size_t)plain - off;
-            memcpy(msg->msg_iov[i].iov_base, f->scratch + off, chunk);
+            memcpy(msg->msg_iov[i].iov_base, f->scratch + start + off, chunk);
             off += chunk;
         }
         if (off < (size_t)plain) {
