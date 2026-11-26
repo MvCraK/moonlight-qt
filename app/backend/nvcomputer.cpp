@@ -359,6 +359,38 @@ bool NvComputer::wake() const
     return success;
 }
 
+namespace {
+
+bool isRoutablePrivateAddress(const QHostAddress& address)
+{
+    if (address.isNull() || address.isLoopback()) {
+        return false;
+    }
+
+    bool isIpv4 = false;
+    const quint32 ipv4 = address.toIPv4Address(&isIpv4);
+    if (isIpv4) {
+        // Explicitly exclude 127.0.0.0/8 loopback in addition to isLoopback().
+        if ((ipv4 & 0xFF000000u) == 0x7F000000u) {
+            return false;
+        }
+        // RFC 1918 private IPv4 ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16.
+        return (ipv4 & 0xFF000000u) == 0x0A000000u ||
+               (ipv4 & 0xFFF00000u) == 0xAC100000u ||
+               (ipv4 & 0xFFFF0000u) == 0xC0A80000u;
+    }
+
+    if (address.protocol() == QAbstractSocket::IPv6Protocol) {
+        // RFC 4193 IPv6 Unique Local Addresses (fc00::/7) and deprecated site-local (fec0::/10).
+        return address.isInSubnet(QHostAddress(QStringLiteral("fc00::")), 7) ||
+               address.isInSubnet(QHostAddress(QStringLiteral("fec0::")), 10);
+    }
+
+    return false;
+}
+
+} // namespace
+
 NvComputer::ReachabilityType NvComputer::getActiveAddressReachability() const
 {
     NvAddress copyOfActiveAddress;
@@ -469,6 +501,31 @@ NvComputer::ReachabilityType NvComputer::getActiveAddressReachability() const
                     Q_ASSERT(addr.prefixLength() >= 0);
                     if (addr.prefixLength() >= 0 && s.localAddress().isInSubnet(s.peerAddress(), addr.prefixLength())) {
                         return cacheResult(ReachabilityType::RI_LAN);
+                    }
+
+                    // If the peer is a routable private address (RFC 1918 / IPv6 ULA, excluding
+                    // loopback) outside this physical LAN interface's directly connected subnet,
+                    // traffic is routed across subnets (e.g. via a soft-router or site-to-site
+                    // tunnel) where 1392B LAN packets can exceed PPPoE + tunnel MTU.
+#if QT_VERSION >= QT_VERSION_CHECK(5, 11, 0)
+                    const bool isPhysicalLanInterface =
+                            (nic.flags() & QNetworkInterface::IsLoopBack) == 0 &&
+                            (nic.type() == QNetworkInterface::Ethernet ||
+                             nic.type() == QNetworkInterface::Wifi) &&
+                            nic.maximumTransmissionUnit() >= 1500;
+#else
+                    const bool isPhysicalLanInterface =
+                            (nic.flags() & QNetworkInterface::IsLoopBack) == 0;
+#endif
+                    if (addr.prefixLength() >= 0 &&
+                            isPhysicalLanInterface &&
+                            !s.localAddress().isLoopback() &&
+                            isRoutablePrivateAddress(s.peerAddress())) {
+                        qInfo() << "Detected cross-subnet private host:" << s.peerAddress().toString()
+                                << "via" << nic.humanReadableName()
+                                << "local" << s.localAddress().toString()
+                                << "prefixLength" << addr.prefixLength();
+                        return cacheResult(ReachabilityType::RI_CROSS_SUBNET_PRIVATE);
                     }
 
                     // Default to unknown if nothing else matched

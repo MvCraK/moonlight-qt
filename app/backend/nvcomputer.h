@@ -58,6 +58,7 @@ public:
         RI_UNKNOWN,
         RI_LAN,
         RI_VPN,
+        RI_CROSS_SUBNET_PRIVATE,
     };
 
     ReachabilityType

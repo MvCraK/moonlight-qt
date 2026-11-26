@@ -969,16 +969,21 @@ private:
                 // Drop the lock before notifying
                 m_ComputerManager->m_Lock.unlock();
 
-                // If this wasn't added via mDNS but it is a RFC 1918 IPv4 address and not a VPN,
-                // go ahead and do the STUN request now to populate an external address.
-                if (!m_Mdns && addressIsSiteLocalV4 && newComputer->getActiveAddressReachability() != NvComputer::RI_VPN) {
-                    quint32 addr;
-                    int err = LiFindExternalAddressIP4("stun.moonlight-stream.org", 3478, &addr);
-                    if (err == 0) {
-                        newComputer->setRemoteAddress(QHostAddress(qFromBigEndian(addr)));
-                    }
-                    else {
-                        qWarning() << "STUN failed to get WAN address:" << err;
+                // If this wasn't added via mDNS but it is a RFC 1918 IPv4 address and neither a VPN
+                // nor a cross-subnet routed private host, go ahead and do the STUN request now to
+                // populate an external address.
+                if (!m_Mdns && addressIsSiteLocalV4) {
+                    const NvComputer::ReachabilityType reachability = newComputer->getActiveAddressReachability();
+                    if (reachability != NvComputer::RI_VPN &&
+                            reachability != NvComputer::RI_CROSS_SUBNET_PRIVATE) {
+                        quint32 addr;
+                        int err = LiFindExternalAddressIP4("stun.moonlight-stream.org", 3478, &addr);
+                        if (err == 0) {
+                            newComputer->setRemoteAddress(QHostAddress(qFromBigEndian(addr)));
+                        }
+                        else {
+                            qWarning() << "STUN failed to get WAN address:" << err;
+                        }
                     }
                 }
 
