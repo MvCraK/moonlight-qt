@@ -4413,13 +4413,14 @@ bool Session::startConnectionAsync()
         case NvComputer::RI_CROSS_SUBNET_PRIVATE:
             // Target is a private address outside the local interface's directly connected subnet
             // (e.g. routed via a soft-router or site-to-site tunnel). Treat it as remote for larger
-            // receive buffers and DSCP=0, and use 1280-byte packets to avoid PPPoE/tunnel MTU black holes.
+            // receive buffers and DSCP=0, and use 1280-byte packets to avoid PPPoE/tunnel MTU black
+            // holes.
             m_StreamConfig.streamingRemotely = STREAM_CFG_REMOTE;
             m_StreamConfig.packetSize = 1280;
-            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
-                        "Cross-subnet private host %s detected; using STREAM_CFG_REMOTE with packetSize=%d",
-                        preparedHostInfo.info.address,
-                        m_StreamConfig.packetSize);
+            SDL_LogInfo(
+                SDL_LOG_CATEGORY_APPLICATION,
+                "Cross-subnet private host %s detected; using STREAM_CFG_REMOTE with packetSize=%d",
+                preparedHostInfo.info.address, m_StreamConfig.packetSize);
             break;
         default:
             // If we don't have reachability info, let moonlight-common-c decide.
